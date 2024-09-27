@@ -1,79 +1,41 @@
-import asyncio
-import aiohttp
-import sqlite3
+from aiohttp import web
+import json
+from datetime import datetime
 
-DATABASE = 'starwars.db'
+ads = []
 
+async def get_ad(request):
+    ad_id = int(request.match_info['id'])
+    ad = next((ad for ad in ads if ad['id'] == ad_id), None)
+    if ad:
+        return web.json_response(ad)
+    return web.HTTPNotFound(text='Ad not found')
 
-async def fetch_data(session, url):
-    async with session.get(url) as response:
-        return await response.json()
-
-
-async def fetch_character(session, character_id):
-    url = f'https://swapi.dev/api/people/{character_id}/'
-    data = await fetch_data(session, url)
-
-    films = await asyncio.gather(*[fetch_data(session, film) for film in data['films']])
-    species = await asyncio.gather(*[fetch_data(session, specie) for specie in data['species']])
-    starships = await asyncio.gather(*[fetch_data(session, starship) for starship in data['starships']])
-    vehicles = await asyncio.gather(*[fetch_data(session, vehicle) for vehicle in data['vehicles']])
-
-    character = {
-        'id': character_id,
-        'birth_year': data['birth_year'],
-        'eye_color': data['eye_color'],
-        'films': ', '.join([film['title'] for film in films]),
-        'gender': data['gender'],
-        'hair_color': data['hair_color'],
-        'height': data['height'],
-        'homeworld': (await fetch_data(session, data['homeworld']))['name'],
-        'mass': data['mass'],
-        'name': data['name'],
-        'skin_color': data['skin_color'],
-        'species': ', '.join([specie['name'] for specie in species]),
-        'starships': ', '.join([starship['name'] for starship in starships]),
-        'vehicles': ', '.join([vehicle['name'] for vehicle in vehicles])
+async def create_ad(request):
+    data = await request.json()
+    ad_id = len(ads) + 1
+    ad = {
+        "id": ad_id,
+        "title": data.get("title"),
+        "description": data.get("description"),
+        "creation_date": datetime.utcnow().isoformat(),
+        "owner": data.get("owner")
     }
+    ads.append(ad)
+    return web.json_response(ad, status=201)
 
-    return character
-
-
-async def save_character(character):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-
-    c.execute('''
-        INSERT OR REPLACE INTO characters 
-        (id, birth_year, eye_color, films, gender, hair_color, height, homeworld, mass, name, skin_color, species, starships, vehicles)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        character['id'], character['birth_year'], character['eye_color'], character['films'], character['gender'],
-        character['hair_color'], character['height'], character['homeworld'], character['mass'], character['name'],
-        character['skin_color'], character['species'], character['starships'], character['vehicles']
-    ))
-
-    conn.commit()
-    conn.close()
+async def delete_ad(request):
+    ad_id = int(request.match_info['id'])
+    global ads
+    ads = [ad for ad in ads if ad['id'] != ad_id]
+    return web.Response(text='Ad deleted successfully')
 
 
-async def main():
-    async with aiohttp.ClientSession() as session:
-        coros = []
+app = web.Application()
+app.router.add_get('/ads/{id}', get_ad)
+app.router.add_post('/ads', create_ad)
+app.router.add_delete('/ads/{id}', delete_ad)
 
-        character_id = 1
-        while True:
-            try:
-                coros.append(fetch_character(session, character_id))
-                character_id += 1
-            except:
-                break
+if __name__ == '__main__':
+    web.run_app(app, host='localhost', port=8080)
 
-        characters = await asyncio.gather(*coros)
-
-        for character in characters:
-            await save_character(character)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
